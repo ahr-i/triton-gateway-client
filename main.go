@@ -3,10 +3,10 @@ package main
 import (
 	"net/http"
 
-	"github.com/ahr-i/triton-client-gateway/handler"
-	"github.com/ahr-i/triton-client-gateway/models"
-	"github.com/ahr-i/triton-client-gateway/setting"
-	"github.com/ahr-i/triton-client-gateway/src/corsController"
+	"github.com/ahr-i/triton-gateway-client/handler"
+	"github.com/ahr-i/triton-gateway-client/models"
+	"github.com/ahr-i/triton-gateway-client/setting"
+	"github.com/ahr-i/triton-gateway-client/src/corsController"
 	"github.com/urfave/negroni"
 )
 

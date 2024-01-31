@@ -1,4 +1,4 @@
-module github.com/ahr-i/triton-client-gateway
+module github.com/ahr-i/triton-gateway-client
 
 go 1.21
 

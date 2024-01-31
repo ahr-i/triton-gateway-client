@@ -10,19 +10,27 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"time"
 
-	"github.com/ahr-i/triton-client-gateway/models"
-	"github.com/ahr-i/triton-client-gateway/setting"
-	"github.com/ahr-i/triton-client-gateway/src/errController"
+	"github.com/ahr-i/triton-gateway-client/models"
+	"github.com/ahr-i/triton-gateway-client/setting"
+	"github.com/ahr-i/triton-gateway-client/src/errController"
+	"github.com/ahr-i/triton-gateway-client/src/networkController"
 	"github.com/gorilla/mux"
 )
 
 /* Response Struct */
 type TritonResponse struct {
+	Key      string `json:"key"`
+	Response string `json:"response"`
+}
+
+type TritonOutput struct {
 	Outputs []struct {
 		Data []float32 `json:"data"`
 	} `json:"outputs"`
@@ -30,6 +38,10 @@ type TritonResponse struct {
 
 type ResponseData struct {
 	Image string `json:"image"`
+}
+
+type SchedulerResponse struct {
+	Key string `json:"key"`
 }
 
 /* Request Struct */
@@ -53,6 +65,8 @@ func (h *Handler) inferHandler(w http.ResponseWriter, r *http.Request) {
 	// log.Println(request.Prompt)
 	if request.Prompt == "" || request.Prompt == " " {
 		rend.JSON(w, http.StatusBadRequest, nil)
+
+		return
 	}
 
 	// Model, Version Check And Setting
@@ -60,13 +74,45 @@ func (h *Handler) inferHandler(w http.ResponseWriter, r *http.Request) {
 	version, err := modelMap[model]
 	if !err {
 		rend.JSON(w, http.StatusNotFound, nil)
+
+		return
 	}
 
 	// Triton Inference Request
+	img, err := requestSchedulerAndGetResult(request, model, version)
+	if err {
+		log.Println("Scheduler ERROR")
+
+		rend.JSON(w, http.StatusBadRequest, nil)
+		return
+	}
+
+	err_ = saveImageToLocal(img)
+	if err_ != nil {
+		panic(err)
+	}
+
+	imgBase64 := encodeImageInBase64(img)
+
+	rend.JSON(w, http.StatusOK, ResponseData{Image: imgBase64})
+}
+
+/* Send an inference request to the Scheduler-node and return the request */
+func requestSchedulerAndGetResult(request RequestData, model string, version string) (*image.RGBA, bool) {
+	_, fp, _, _ := runtime.Caller(1)
+
 	rand.Seed(time.Now().UnixNano())
 
 	seed := rand.Intn(10001)
-	url := "http://" + setting.TritonUrl + "/v2/models/" + model + "/versions/" + version + "/infer"
+	listenPort, err_ := networkController.GetAvailablePort()
+	if err_ != nil {
+		log.Println("PORT ERROR")
+
+		return nil, true
+	}
+
+	urlQuery := "?model=" + model + "&version=" + version + "&address=" + networkController.GetLocalIP() + ":" + strconv.Itoa(listenPort)
+	url := "http://" + setting.SchedulerUrl + "/request" + urlQuery
 	requestData := map[string]interface{}{
 		"inputs": []map[string]interface{}{
 			{
@@ -114,71 +160,134 @@ func (h *Handler) inferHandler(w http.ResponseWriter, r *http.Request) {
 	errController.ErrorCheck(err_, "HTTP REQUEST ERROR", fp)
 	req.Header.Set("Content-Type", "application/json")
 
-	// Triton Server Response
+	// Scheduler Server Response
 	client := &http.Client{}
 	resp, err_ := client.Do(req)
 	errController.ErrorCheck(err_, "HTTP RESPONSE ERROR", fp)
 	defer resp.Body.Close()
 
-	// Response Decode
-	body, err_ := ioutil.ReadAll(resp.Body)
-	errController.ErrorCheck(err_, "HTTP BODY READ ERROR", fp)
+	if resp.StatusCode == http.StatusOK {
+		body, err_ := ioutil.ReadAll(resp.Body)
+		errController.ErrorCheck(err_, "RESPONSE READ ERROR", fp)
 
-	var tritonResponse TritonResponse
-	if err := json.Unmarshal(body, &tritonResponse); err != nil {
-		log.Fatalf("RESPONSE JSON PARSE ERROR: %v", err)
+		var schedulerResponse SchedulerResponse
+		if err := json.Unmarshal(body, &schedulerResponse); err != nil {
+			log.Fatalf("RESPONSE JSON PARSE ERROR: %v", err)
+		}
+		log.Println(schedulerResponse.Key)
+
+		img := listenAndGetImage(listenPort, schedulerResponse.Key)
+
+		return img, false
+	} else {
+		return nil, true
+	}
+}
+
+func listenAndGetImage(port int, authCode string) *image.RGBA {
+	log.Println("Open Port: ", port)
+	receiverAddr, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(port))
+	if err != nil {
+		panic(err)
 	}
 
-	// Uint8 Array To Image
-	if len(tritonResponse.Outputs) > 0 && len(tritonResponse.Outputs[0].Data) > 0 {
-		imgData := tritonResponse.Outputs[0].Data
+	receiverConn, err := net.ListenTCP("tcp", receiverAddr)
+	if err != nil {
+		panic(err)
+	}
+	defer receiverConn.Close()
 
-		// Image의 크기 가정
-		width, height := 512, 512
-		img := image.NewRGBA(image.Rect(0, 0, width, height))
-
-		// ImgData에서 픽셀 값 추출 및 Image 생성
-		for i := 0; i < len(imgData); i += 3 {
-			x := (i / 3) % width
-			y := (i / 3) / width
-			r := uint8(imgData[i] * 255)
-			g := uint8(imgData[i+1] * 255)
-			b := uint8(imgData[i+2] * 255)
-			img.Set(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
-		}
-
-		// Image Local 저장
-		currentTime := time.Now().Format("20060102-150405.999")
-		fileName := "result-" + currentTime + ".png"
-		file, err := os.Create("./result/" + fileName)
+	buffer := make([]byte, 17485760)
+	for {
+		conn, err := receiverConn.AcceptTCP()
 		if err != nil {
-			log.Fatalf("이미지 파일 생성 실패: %v", err)
+			panic(err)
 		}
-		defer file.Close()
+		defer conn.Close()
 
-		if err := png.Encode(file, img); err != nil {
-			log.Fatalf("이미지 저장 실패: %v", err)
+		n, err_ := conn.Read(buffer)
+		if err_ != nil {
+			panic(err)
 		}
 
-		// Image Base64 Encoding
-		var buffer bytes.Buffer
-
-		if err := png.Encode(&buffer, img); err != nil {
-			log.Println("BASE ENCODE FAIL")
-
-			os.Exit(1)
+		var tritonResponse TritonResponse
+		if err := json.Unmarshal(buffer[:n], &tritonResponse); err != nil {
+			log.Println("ERR", err)
 		}
-		imgBase64 := base64.StdEncoding.EncodeToString(buffer.Bytes())
+		log.Println(tritonResponse.Key)
 
-		// Response에 Image 추가
-		w.Header().Set("Content-Type", "application/json")
-		responseData := ResponseData{Image: imgBase64}
+		if tritonResponse.Key == authCode {
+			var tritonOutput TritonOutput
 
-		// Response
-		rend.JSON(w, http.StatusOK, responseData)
-		return
+			err := json.Unmarshal([]byte(tritonResponse.Response), &tritonOutput)
+			if err != nil {
+				panic(err)
+			}
+
+			img, err_ := converUint8ToPng(tritonOutput.Outputs[0].Data)
+			if err_ {
+				panic(err)
+			}
+
+			return img
+		} else {
+			log.Println("ERROR")
+
+			conn.Close()
+		}
+	}
+}
+
+func converUint8ToPng(imgData []float32) (*image.RGBA, bool) {
+	// Uint8 Array To Image
+	if len(imgData) <= 0 {
+		return nil, true
 	}
 
-	// Inference Fail
-	rend.JSON(w, http.StatusBadRequest, nil)
+	// Image의 크기 가정
+	width, height := 512, 512
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// ImgData에서 픽셀 값 추출 및 Image 생성
+	for i := 0; i < len(imgData); i += 3 {
+		x := (i / 3) % width
+		y := (i / 3) / width
+		r := uint8(imgData[i] * 255)
+		g := uint8(imgData[i+1] * 255)
+		b := uint8(imgData[i+2] * 255)
+		img.Set(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
+	}
+
+	return img, false
+}
+
+/* Save image to local */
+func saveImageToLocal(img *image.RGBA) error {
+	currentTime := time.Now().Format("20060102-150405.999")
+	fileName := "result-" + currentTime + ".png"
+	file, err := os.Create("./result/" + fileName)
+	if err != nil {
+		log.Fatalf("이미지 파일 생성 실패: %v", err)
+	}
+	defer file.Close()
+
+	if err := png.Encode(file, img); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+/* Encode the image in base64 */
+func encodeImageInBase64(img *image.RGBA) string {
+	var buffer bytes.Buffer
+
+	if err := png.Encode(&buffer, img); err != nil {
+		log.Println("BASE ENCODE FAIL")
+
+		os.Exit(1)
+	}
+	imgBase64 := base64.StdEncoding.EncodeToString(buffer.Bytes())
+
+	return imgBase64
 }
