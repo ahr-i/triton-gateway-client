@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 	"runtime"
 
-	"github.com/ahr-i/triton-client-gateway/src/errController"
+	"github.com/ahr-i/triton-gateway-client/src/errController"
 )
 
 /* model_list.json Struct */

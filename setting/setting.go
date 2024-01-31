@@ -1,12 +1,12 @@
 package setting
 
 /* ----- Server Setting ----- */
-const ServerPort string = "80"
+const ServerPort string = "80" // Edit this
 
 const ModelPath string = "./models/model_list.json"
 
 /* ----- Triton Server Setting ----- */
-const TritonUrl string = "100.0.0.2:8000"
+const SchedulerUrl string = "localhost:8000" // Edit this
 
 const batchSize int = 1
 const Samples int = 1
