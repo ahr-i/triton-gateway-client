@@ -141,8 +141,8 @@ func listen(port int, Token string) ([]byte, error) {
 		defer conn.Close()
 
 		// Read
-		n, err_ := conn.Read(buffer)
-		if err_ != nil {
+		n, err := conn.Read(buffer)
+		if err != nil {
 			return nil, err
 		}
 
