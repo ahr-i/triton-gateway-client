@@ -19,10 +19,9 @@ func CreateHandler() *Handler {
 		Handler: mux,
 	}
 
-	mux.HandleFunc("/", handler.HomeHandler).Methods("GET")                              // HTML, CSS, JS 요청
-	mux.HandleFunc("/ping", handler.PingHandler).Methods("GET")                          // Ping Check
-	mux.HandleFunc("/get/model-list", handler.getModelListHandler).Methods("GET")        // Model List 반환
-	mux.HandleFunc("/model/{name:[a-z-_]+}/infer", handler.inferHandler).Methods("POST") // Triton Server Inference 요청
+	mux.HandleFunc("/", handler.HomeHandler).Methods("GET")                                               // HTML, CSS, JS 요청
+	mux.HandleFunc("/ping", handler.PingHandler).Methods("GET")                                           // Ping Check
+	mux.HandleFunc("/model/{name:[a-z-_]+}/{version:[0-9]+}/infer", handler.inferHandler).Methods("POST") // Scheduler Server Inference 요청
 
 	return handler
 }
