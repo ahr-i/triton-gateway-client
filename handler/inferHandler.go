@@ -3,15 +3,14 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
-	"runtime"
 	"strconv"
 
 	"github.com/ahr-i/triton-gateway-client/setting"
-	"github.com/ahr-i/triton-gateway-client/src/errController"
 	"github.com/ahr-i/triton-gateway-client/src/networkController"
 	"github.com/gorilla/mux"
 )
@@ -36,15 +35,15 @@ func (h *Handler) inferHandler(w http.ResponseWriter, r *http.Request) {
 	// Extract request content from the body
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		panic(err)
+		log.Println("** (ERROR)", err)
+		return
 	}
 	defer r.Body.Close()
 
 	// Triton Inference Request
-	response, err_ := requestScheduler(body, model, version)
-	if err_ {
-		log.Println("Scheduler ERROR")
-
+	response, err := requestScheduler(body, model, version)
+	if err != nil {
+		log.Println("** (ERROR)", err)
 		rend.JSON(w, http.StatusBadRequest, nil)
 		return
 	}
@@ -56,20 +55,16 @@ func (h *Handler) inferHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 /* Send an inference request to the Scheduler-node and return the request */
-func requestScheduler(request []byte, model string, version string) ([]byte, bool) {
-	_, fp, _, _ := runtime.Caller(1)
-
+func requestScheduler(request []byte, model string, version string) ([]byte, error) {
 	log.Println("* (System) Request: ▽▽▽▽▽▽▽▽▽▽")
 	log.Println("Model:", model)
 	log.Println("Version:", version)
 	log.Println(string(request))
 
 	// Search for available ports
-	listenPort, err_ := networkController.GetAvailablePort()
-	if err_ != nil {
-		log.Println("** (ERROR) Cannot find any live ports")
-
-		return nil, true
+	listenPort, err := networkController.GetAvailablePort()
+	if err != nil {
+		return nil, err
 	}
 
 	// Url setting
@@ -77,14 +72,18 @@ func requestScheduler(request []byte, model string, version string) ([]byte, boo
 	url := "http://" + setting.SchedulerUrl + "/request" + urlQuery
 
 	// Request
-	req, err_ := http.NewRequest("POST", url, bytes.NewBuffer(request))
-	errController.ErrorCheck(err_, "HTTP REQUEST ERROR", fp)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(request))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	// Scheduler Server Response
 	client := &http.Client{}
-	resp, err_ := client.Do(req)
-	errController.ErrorCheck(err_, "HTTP RESPONSE ERROR", fp)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	// Start listening when the status code is 200
@@ -92,38 +91,43 @@ func requestScheduler(request []byte, model string, version string) ([]byte, boo
 		log.Println("* (System) Received a status code 200 from the Scheduler.")
 
 		// Read body
-		body, err_ := ioutil.ReadAll(resp.Body)
-		errController.ErrorCheck(err_, "RESPONSE READ ERROR", fp)
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
 
 		// Json decode
 		var schedulerResponse SchedulerResponse
 		if err := json.Unmarshal(body, &schedulerResponse); err != nil {
-			log.Fatalf("RESPONSE JSON PARSE ERROR: %v", err)
+			return nil, err
 		}
 		log.Println("* (System) Get token:", schedulerResponse.Token)
 
 		// Listen and get response
-		response := listen(listenPort, schedulerResponse.Token)
+		response, err := listen(listenPort, schedulerResponse.Token)
+		if err != nil {
+			return nil, err
+		}
 
-		return response, false
+		return response, nil
 	} else {
-		return nil, true
+		return nil, errors.New("The token value is invalid.")
 	}
 }
 
 /* Listen on the specified port and deliver the response */
-func listen(port int, Token string) []byte {
+func listen(port int, Token string) ([]byte, error) {
 	log.Println("* (System) Listen port:", port)
 
 	// TCP listen
 	receiverAddr, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	receiverConn, err := net.ListenTCP("tcp", receiverAddr)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer receiverConn.Close()
 
@@ -132,27 +136,27 @@ func listen(port int, Token string) []byte {
 		//TCP accept
 		conn, err := receiverConn.AcceptTCP()
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 		defer conn.Close()
 
 		// Read
 		n, err_ := conn.Read(buffer)
 		if err_ != nil {
-			panic(err)
+			return nil, err
 		}
 
 		// Json decode
 		var tritonResponse TritonResponse
 		if err := json.Unmarshal(buffer[:n], &tritonResponse); err != nil {
-			log.Println("ERR", err)
+			return nil, err
 		}
 		log.Println("* (System) Receive token:", tritonResponse.Token)
 
 		// Check the token value
 		if tritonResponse.Token == Token {
 			log.Println("* (System) Successfully authenticated the token.")
-			return []byte(tritonResponse.Response)
+			return []byte(tritonResponse.Response), nil
 		} else {
 			log.Println("ERROR")
 
