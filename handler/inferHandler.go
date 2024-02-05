@@ -17,7 +17,7 @@ import (
 
 /* Response Struct */
 type TritonResponse struct {
-	Token    string `json:"key"`
+	Token    string `json:"token"`
 	Response string `json:"response"`
 }
 
