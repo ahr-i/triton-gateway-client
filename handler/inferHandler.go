@@ -8,6 +8,7 @@ import (
 	"github.com/ahr-i/triton-agent/src/httpController"
 	"github.com/ahr-i/triton-gateway-client/agentCommunicator"
 	"github.com/ahr-i/triton-gateway-client/schedulerCommunicator"
+	"github.com/ahr-i/triton-gateway-client/setting"
 	"github.com/gorilla/mux"
 )
 
@@ -27,11 +28,16 @@ func (h *Handler) inferHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// Get GPU-node address
-	address, err := schedulerCommunicator.GetAgentAddress(model, version)
-	if err != nil {
-		log.Println("** (ERROR)", err)
-		rend.JSON(w, http.StatusBadRequest, nil)
-		return
+	var address string
+	if setting.SchedulerActive {
+		address, err = schedulerCommunicator.GetAgentAddress(model, version)
+		if err != nil {
+			log.Println("** (ERROR)", err)
+			rend.JSON(w, http.StatusBadRequest, nil)
+			return
+		}
+	} else {
+		address = setting.AgentURL
 	}
 
 	// Triton inference request
