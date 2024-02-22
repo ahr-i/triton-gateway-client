@@ -19,9 +19,10 @@ func CreateHandler() *Handler {
 		Handler: mux,
 	}
 
-	mux.HandleFunc("/", handler.HomeHandler).Methods("GET")                                               // HTML, CSS, JS 요청
-	mux.HandleFunc("/ping", handler.PingHandler).Methods("GET")                                           // Ping Check
-	mux.HandleFunc("/model/{name:[a-z-_]+}/{version:[0-9]+}/infer", handler.inferHandler).Methods("POST") // Scheduler Server Inference 요청
+	mux.HandleFunc("/", handler.homeHandler).Methods("GET")                                                                               // HTML, CSS, JS 요청
+	mux.HandleFunc("/ping", handler.pingHandler).Methods("GET")                                                                           // Ping Check
+	mux.HandleFunc("/model/{model:[a-z-_]+}/{version:[0-9]+}/infer", handler.inferHandler).Methods("POST")                                // Scheduler Server Inference 요청
+	mux.HandleFunc("/provider/{provider:[a-z-_]+}/model/{model:[a-z-_]+}/{version:[0-9]+}/infer", handler.inferV2Handler).Methods("POST") // Request inference with information on provider, model, version.
 
 	return handler
 }
