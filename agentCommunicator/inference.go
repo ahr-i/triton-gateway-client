@@ -12,7 +12,7 @@ import (
 /* Information on provider, model, and version is required. */
 func InferenceV2(address string, provider string, model string, version string, request []byte) ([]byte, error) {
 	log.Println("* (System) Send a request to the Triton agent.")
-	url := fmt.Sprintf("http://%s/model/%s/%s/infer", address, model, version)
+	url := fmt.Sprintf("http://%s/provider/%s/model/%s/%s/infer", address, provider, model, version)
 
 	// Send an inference request to the agent.
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(request))
